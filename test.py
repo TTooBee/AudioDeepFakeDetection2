@@ -1,69 +1,100 @@
-import os
 import numpy as np
 import librosa
+import scipy.signal
+import matplotlib.pyplot as plt
 
-# LPC를 LSF로 변환하는 함수
-def lpc_to_lsf(lpc_coeffs):
-    a = np.append([1], -lpc_coeffs)
-    p = len(lpc_coeffs)
-    b = np.zeros(p + 1)
-    b[::2] = a[::2]
-    b[1::2] = -a[1::2]
+def poly2lsf(a):
+    """
+    Convert prediction polynomial to line spectral frequencies (LSF).
     
-    roots_a = np.roots(a)
-    roots_b = np.roots(b)
+    Parameters:
+    a (array-like): Prediction polynomial coefficients
     
-    angles_a = np.angle(roots_a)
-    angles_b = np.angle(roots_b)
+    Returns:
+    lsf (numpy.ndarray): Line spectral frequencies
+    """
+    # Ensure the input is a numpy array
+    a = np.asarray(a)
     
-    angles_a = angles_a[np.isreal(roots_a)]
-    angles_b = angles_b[np.isreal(roots_b)]
+    if a.ndim != 1:
+        raise ValueError("Input polynomial must be a 1-D array.")
     
-    lsf = np.sort(np.concatenate((angles_a, angles_b)))
-    return lsf[:p]
+    if not np.isrealobj(a):
+        raise ValueError("Input polynomial must be real.")
+    
+    # Normalize the polynomial if the first coefficient is not unity
+    if a[0] != 1.0:
+        a = a / a[0]
+    
+    # Check if the roots are within the unit circle
+    if np.max(np.abs(np.roots(a))) >= 1.0:
+        raise ValueError("Polynomial must have all roots inside the unit circle.")
+    
+    # Form the sum and difference filters
+    p = len(a) - 1  # The leading one in the polynomial is not used
+    a1 = np.append(a, 0)
+    a2 = a1[::-1]
+    P1 = a1 - a2  # Difference filter
+    Q1 = a1 + a2  # Sum filter
+    
+    # If order is even, remove the known root at z = 1 for P1 and z = -1 for Q1
+    if p % 2 != 0:  # Odd order
+        P = np.polynomial.polynomial.polydiv(P1, [1, 0, -1])[0]
+        Q = Q1
+    else:  # Even order
+        P = np.polynomial.polynomial.polydiv(P1, [1, -1])[0]
+        Q = np.polynomial.polynomial.polydiv(Q1, [1, 1])[0]
+    
+    rP = np.roots(P)
+    rQ = np.roots(Q)
+    
+    # Considering complex conjugate roots along with zeros for finding angles
+    aP = np.angle(rP)
+    aQ = np.angle(rQ)
+    
+    # Combine and sort the angles
+    lsf_temp = np.sort(np.concatenate((aP, aQ)))
+    
+    # Remove negative angles and sort again
+    lsf_temp = np.sort(lsf_temp[lsf_temp >= 0])
+    
+    # Ensure we return the correct number of LSFs
+    lsf = lsf_temp[:p]
+    
+    return lsf
 
-# 오디오 파일 로드 및 프레임 나누기
-def process_audio(file_path, frame_length=0.02, hop_length=0.01, order=16):
-    # 절대 경로로 변환
-    abs_file_path = os.path.abspath(file_path)
-    
-    # 파일 존재 여부 확인
-    if not os.path.exists(abs_file_path):
-        raise FileNotFoundError(f"File not found: {abs_file_path}")
-    
-    y, sr = librosa.load(abs_file_path, sr=None)
-    frame_size = int(frame_length * sr)
-    hop_size = int(hop_length * sr)
-    
-    frames = librosa.util.frame(y, frame_length=frame_size, hop_length=hop_size).T
-    
-    lpc_coefficients = []
-    lsf_frequencies = []
-    
-    for frame in frames:
-        lpc_coeffs = librosa.lpc(frame, order=order)
-        lpc_coefficients.append(lpc_coeffs)
-        lsf_freqs = lpc_to_lsf(lpc_coeffs[1:])  # LPC 함수에서 첫 번째 계수는 제외
-        lsf_frequencies.append(lsf_freqs)
-    
-    return np.array(lpc_coefficients), np.array(lsf_frequencies)
+# Example usage
+a = [1.0000, -1.6660, 0.9526, -0.2544, -0.7324, 1.3015, -0.6141, -0.2870, 0.6757, -0.5656, 0.2803, 0.0373, 0.0713, 0.0208, -0.2092, 0.0253, -0.0807, -0.0200, 0.2397, -0.1288, 0.0230]
+lsf = poly2lsf(a)
+print("Line spectral frequencies:", lsf)
 
-# 메인 함수
-if __name__ == "__main__":
-    import sys
-    if len(sys.argv) != 2:
-        print("Usage: python script.py <audio_file_path>")
-        sys.exit(1)
-    
-    audio_file_path = sys.argv[1]
-    
-    try:
-        lpc_coeffs, lsf_freqs = process_audio(audio_file_path)
-        
-        # 결과 출력
-        print("LPC Coefficients:")
-        print(lpc_coeffs)
-        print("\nLSF Frequencies:")
-        print(lsf_freqs)
-    except FileNotFoundError as e:
-        print(e)
+# 오디오 파일 읽기
+x, Fs = librosa.load("real_temp/wav/LJ001-0001_16k.wav", sr=None)
+
+# 프레임 크기 및 시작 지점 설정
+frame_size = 320
+bp = 22000
+M = 20
+
+# 특정 구간 추출
+segment = x[bp:bp + frame_size]
+
+# segment의 시간 축 생성
+time = np.arange(len(segment)) / Fs
+
+# segment 플롯
+plt.figure(figsize=(14, 5))
+plt.plot(time, segment)
+plt.xlabel('Time (seconds)')
+plt.ylabel('Amplitude')
+plt.title('Waveform Segment of LJ001-0001_16k.wav')
+plt.grid()
+
+# 플롯을 PNG 파일로 저장
+plt.savefig("segment_waveform.png")
+plt.close()
+
+# LPC 계수 계산
+a = librosa.lpc(segment, order=M)
+
+print("LPC coefficients:", a)

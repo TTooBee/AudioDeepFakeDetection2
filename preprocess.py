@@ -42,10 +42,70 @@ def lpc_to_lsf(lpc_coeffs):
     
     return lsf
 
-def extract_lpc_lsf_lsp(waveform, sample_rate, feature_dim, n_fft=100, hop_length=100, win_length=100):
+def poly2lsf(a):
+    """
+    Convert prediction polynomial to line spectral frequencies (LSF).
+    
+    Parameters:
+    a (array-like): Prediction polynomial coefficients
+    
+    Returns:
+    lsf (numpy.ndarray): Line spectral frequencies
+    """
+    # Ensure the input is a numpy array
+    a = np.asarray(a)
+    
+    if a.ndim != 1:
+        raise ValueError("Input polynomial must be a 1-D array.")
+    
+    if not np.isrealobj(a):
+        raise ValueError("Input polynomial must be real.")
+    
+    # Normalize the polynomial if the first coefficient is not unity
+    if a[0] != 1.0:
+        a = a / a[0]
+    
+    # Check if the roots are within the unit circle
+    if np.max(np.abs(np.roots(a))) >= 1.0:
+        raise ValueError("Polynomial must have all roots inside the unit circle.")
+    
+    # Form the sum and difference filters
+    p = len(a) - 1  # The leading one in the polynomial is not used
+    a1 = np.append(a, 0)
+    a2 = a1[::-1]
+    P1 = a1 - a2  # Difference filter
+    Q1 = a1 + a2  # Sum filter
+    
+    # If order is even, remove the known root at z = 1 for P1 and z = -1 for Q1
+    if p % 2 != 0:  # Odd order
+        P = np.polynomial.polynomial.polydiv(P1, [1, 0, -1])[0]
+        Q = Q1
+    else:  # Even order
+        P = np.polynomial.polynomial.polydiv(P1, [1, -1])[0]
+        Q = np.polynomial.polynomial.polydiv(Q1, [1, 1])[0]
+    
+    rP = np.roots(P)
+    rQ = np.roots(Q)
+    
+    # Considering complex conjugate roots along with zeros for finding angles
+    aP = np.angle(rP)
+    aQ = np.angle(rQ)
+    
+    # Combine and sort the angles
+    lsf_temp = np.sort(np.concatenate((aP, aQ)))
+    
+    # Remove negative angles and sort again
+    lsf_temp = np.sort(lsf_temp[lsf_temp >= 0])
+    
+    # Ensure we return the correct number of LSFs
+    lsf = lsf_temp[:p]
+    
+    return lsf
+
+def extract_lpc_lsf(waveform, sample_rate, feature_dim, n_fft=100, hop_length=160, win_length=320):
     num_frames = 1 + int((waveform.size(1) - win_length) / hop_length)
     lsf_features = np.zeros((num_frames, feature_dim))
-    lsp_features = np.zeros((num_frames, feature_dim))
+    # lsp_features = np.zeros((num_frames, feature_dim))
 
     for i in range(num_frames):
         start = i * hop_length
@@ -55,14 +115,15 @@ def extract_lpc_lsf_lsp(waveform, sample_rate, feature_dim, n_fft=100, hop_lengt
         if len(frame) < win_length:
             frame = np.pad(frame, (0, win_length - len(frame)), mode='constant')
 
-        lpc_coeffs = librosa.lpc(frame, order=feature_dim)
-        lsf = lpc_to_lsf(lpc_coeffs)
-        lsf_features[i, :] = lsf[:feature_dim]
+        lpc_coeffs = librosa.lpc(frame, order=feature_dim) # lpc 구하기
+        # lsf = lpc_to_lsf(lpc_coeffs)
+        lsf = poly2lsf(lpc_coeffs) # lpc -> lsf
+        # lsf_features[i, :] = lsf[:feature_dim]
         
         # For LSP, compute the roots and take their angle
-        lsp_features[i, :] = np.angle(np.roots(lpc_coeffs)[-feature_dim:])
+        # lsp_features[i, :] = np.angle(np.roots(lpc_coeffs)[-feature_dim:])
     
-    return lsf_features.T, lsp_features.T
+    return lsf_features.T # , lsp_features.T
 
 def standardize(features):
     mean = np.mean(features, axis=1, keepdims=True)
@@ -102,14 +163,14 @@ def load_features(base_folder, original_feature_dim, selected_indices):
         combined = np.concatenate((matrix, delta, delta_delta), axis=1)
 
         # 행 별로 정규화 진행
-        combined = standardize(combined)
+        # combined = standardize(combined)
 
         selected_evs = combined[selected_indices, :]
         all_features.append(selected_evs)
 
     return np.array(all_features)
 
-def extract_mfcc(base_folder, original_feature_dim, selected_indices, sample_rate=16000, n_fft=400, hop_length=160, win_length=400):
+def extract_mfcc(base_folder, original_feature_dim, selected_indices, sample_rate=16000, n_fft=320, hop_length=160, win_length=320):
     all_features = []
     wav_folder = os.path.join(base_folder, 'wav')
     
@@ -152,20 +213,20 @@ def extract_mfcc(base_folder, original_feature_dim, selected_indices, sample_rat
         combined = np.concatenate((mfcc, delta, delta_delta), axis=1)
 
         # 전체 행렬에 대해 정규화 진행
-        combined = standardize(combined)
+        # combined = standardize(combined)
 
         selected_mfcc = combined[selected_indices, :]
 
         all_features.append(selected_mfcc)
     return np.array(all_features)
 
-def extract_lsf_lsp(base_folder, original_feature_dim, lsf_indices, lsp_indices, sample_rate=16000, n_fft=100, hop_length=100, win_length=100):
+def extract_lsf(base_folder, original_feature_dim, lsf_indices, sample_rate=16000, n_fft=100, hop_length=160, win_length=320):
     all_features_lsf = []
-    all_features_lsp = []
+    # all_features_lsp = []
     wav_folder = os.path.join(base_folder, 'wav')
     
     if not os.path.isdir(wav_folder):
-        return np.array(all_features_lsf), np.array(all_features_lsp)
+        return np.array(all_features_lsf) #, np.array(all_features_lsp)
 
     files = [f for f in os.listdir(wav_folder) if f.endswith(('.flac', '.wav'))]
     
@@ -176,32 +237,32 @@ def extract_lsf_lsp(base_folder, original_feature_dim, lsf_indices, lsp_indices,
         if sr != sample_rate:
             waveform = torchaudio.transforms.Resample(orig_freq=sr, new_freq=sample_rate)(waveform)
         
-        lsf, lsp = extract_lpc_lsf_lsp(waveform, sample_rate, original_feature_dim, n_fft, hop_length, win_length)
+        lsf = extract_lpc_lsf(waveform, sample_rate, original_feature_dim, n_fft, hop_length, win_length)
 
         if lsf.shape[1] > 324:
             lsf = lsf[:, :324]
-            lsp = lsp[:, :324]
+            # lsp = lsp[:, :324]
         elif lsf.shape[1] < 324:
             padding = np.zeros((original_feature_dim, 324 - lsf.shape[1]))
             lsf = np.hstack((lsf, padding))
-            lsp = np.hstack((lsp, padding))
+            # lsp = np.hstack((lsp, padding))
 
         delta_lsf = compute_delta(lsf)
         delta_delta_lsf = compute_delta(delta_lsf)
         combined_lsf = np.concatenate((lsf, delta_lsf, delta_delta_lsf), axis=1)
-        combined_lsf = standardize(combined_lsf)  # 전체 행렬에 대해 정규화 진행
+        # combined_lsf = standardize(combined_lsf)  # 전체 행렬에 대해 정규화 진행
         selected_lsf = combined_lsf[lsf_indices, :]
 
-        delta_lsp = compute_delta(lsp)
-        delta_delta_lsp = compute_delta(delta_lsp)
-        combined_lsp = np.concatenate((lsp, delta_lsp, delta_delta_lsp), axis=1)
-        combined_lsp = standardize(combined_lsp)  # 전체 행렬에 대해 정규화 진행
-        selected_lsp = combined_lsp[lsp_indices, :]
+        # delta_lsp = compute_delta(lsp)
+        # delta_delta_lsp = compute_delta(delta_lsp)
+        # combined_lsp = np.concatenate((lsp, delta_lsp, delta_delta_lsp), axis=1)
+        # # combined_lsp = standardize(combined_lsp)  # 전체 행렬에 대해 정규화 진행
+        # selected_lsp = combined_lsp[lsp_indices, :]
 
         all_features_lsf.append(selected_lsf)
-        all_features_lsp.append(selected_lsp)
+        # all_features_lsp.append(selected_lsp)
     
-    return np.array(all_features_lsf), np.array(all_features_lsp)
+    return np.array(all_features_lsf) # , np.array(all_features_lsp)
 
 def parse_feature_indices(index_str, max_dim):
     if index_str == 'all':
@@ -233,8 +294,8 @@ if __name__ == "__main__":
     features_fake_mfcc = extract_mfcc(args.fake, args.feature_dim, mfcc_indices)
     features_real_evs = load_features(args.real, args.feature_dim, evs_indices)
     features_fake_evs = load_features(args.fake, args.feature_dim, evs_indices)
-    features_real_lsf, features_real_lsp = extract_lsf_lsp(args.real, args.feature_dim, lsf_indices, lsp_indices)
-    features_fake_lsf, features_fake_lsp = extract_lsf_lsp(args.fake, args.feature_dim, lsf_indices, lsp_indices)
+    features_real_lsf, features_real_lsp = extract_lsf(args.real, args.feature_dim, lsf_indices, lsp_indices)
+    features_fake_lsf, features_fake_lsp = extract_lsf(args.fake, args.feature_dim, lsf_indices, lsp_indices)
 
     print(f"MFCC Real features shape: {features_real_mfcc.shape}")
     print(f"MFCC Fake features shape: {features_fake_mfcc.shape}")

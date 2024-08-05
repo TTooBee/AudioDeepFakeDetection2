@@ -1,7 +1,7 @@
 # train.py 실행 명령어(코드 테스트)
 
 ```bash
-python train.py --feature_dim 12 --real real_temp --fake fake_temp --batch_size 2 --epochs 4 --model lstm --learning_rate 0.00001 --mfcc_feature_idx '0 1 3' --evs_feature_idx '2 4'
+python train.py --feature_dim 12 --real real_temp --fake fake_temp --batch_size 2 --epochs 4 --model lstm --learning_rate 0.00001 --mfcc_feature_idx '0 1 3' --evs_feature_idx '2 4' --lsf_feature_idx 'none' --lsp_feature_idx 'none'
 ```
 
 # train.py 실행 명령어(실제 학습)
@@ -40,6 +40,8 @@ python train.py --feature_dim 12 --real LJSpeech-1.1/wavs --fake generated_audio
 
 
 # 진행상황 및 주의사항(수시로 업데이트됨)
+- (2024/08/06) libosa lpc랑 matlab lpc 값이 조금 다름
+- (2024/08/06) 파이썬으로 매트랩 poly2lsf 구현했음(구현 성공적)
 - (2024/08/02) evs에서 모든 서브프레임에 대한 lsp 추출하였음
     - 파이썬으로 lsp 추출하는 방법 검토해볼 필요 있음
 - (2024/07/03) run_lsp.sh, run_lsf.sh, run_mfcc.sh 실행하면 각각 mfcc '20 ~ 31'에 lsp, lsf, 저차원 mfcc 쌓아서 학습 진행
@@ -51,7 +53,7 @@ python train.py --feature_dim 12 --real LJSpeech-1.1/wavs --fake generated_audio
 - (2024/07/02) mfcc는 pt파일로 저장하지 말고 그냥 음원에서 뽑자
     - 40차 이상이 넘어가니까 죽는다. 
 - (2024/07/01) 현재 서버의 pt 파일들은 모두 정규화된 12차 데이터이다
-- 현재 코드에서 mfcc_feature_idx를 'all'로 두면 고정된 filter back 수인 50이 모두 나옴
+- 현재 코드에서 mfcc_feature_idx를 'all'로 두면 고정된 filter bank 수인 50이 모두 나옴
     - 우선은 수정하지 않음(추후에 수정 방향 생각)
 - (2024/06/30) Dataset.py에서, feature_dim이 클 경우 pt파일로 저장하는 부분 주석처리 해야함
 - model을 cnn으로 설정했을 경우, 'mfcc_feature_idx의 크기 + evs_feature_idx의 크기'가 8 이상이어야 함
