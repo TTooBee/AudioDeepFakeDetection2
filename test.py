@@ -1,100 +1,193 @@
-import numpy as np
-import librosa
-import scipy.signal
-import matplotlib.pyplot as plt
+import torch
+import torch.nn as nn
 
-def poly2lsf(a):
-    """
-    Convert prediction polynomial to line spectral frequencies (LSF).
-    
-    Parameters:
-    a (array-like): Prediction polynomial coefficients
-    
-    Returns:
-    lsf (numpy.ndarray): Line spectral frequencies
-    """
-    # Ensure the input is a numpy array
-    a = np.asarray(a)
-    
-    if a.ndim != 1:
-        raise ValueError("Input polynomial must be a 1-D array.")
-    
-    if not np.isrealobj(a):
-        raise ValueError("Input polynomial must be real.")
-    
-    # Normalize the polynomial if the first coefficient is not unity
-    if a[0] != 1.0:
-        a = a / a[0]
-    
-    # Check if the roots are within the unit circle
-    if np.max(np.abs(np.roots(a))) >= 1.0:
-        raise ValueError("Polynomial must have all roots inside the unit circle.")
-    
-    # Form the sum and difference filters
-    p = len(a) - 1  # The leading one in the polynomial is not used
-    a1 = np.append(a, 0)
-    a2 = a1[::-1]
-    P1 = a1 - a2  # Difference filter
-    Q1 = a1 + a2  # Sum filter
-    
-    # If order is even, remove the known root at z = 1 for P1 and z = -1 for Q1
-    if p % 2 != 0:  # Odd order
-        P = np.polynomial.polynomial.polydiv(P1, [1, 0, -1])[0]
-        Q = Q1
-    else:  # Even order
-        P = np.polynomial.polynomial.polydiv(P1, [1, -1])[0]
-        Q = np.polynomial.polynomial.polydiv(Q1, [1, 1])[0]
-    
-    rP = np.roots(P)
-    rQ = np.roots(Q)
-    
-    # Considering complex conjugate roots along with zeros for finding angles
-    aP = np.angle(rP)
-    aQ = np.angle(rQ)
-    
-    # Combine and sort the angles
-    lsf_temp = np.sort(np.concatenate((aP, aQ)))
-    
-    # Remove negative angles and sort again
-    lsf_temp = np.sort(lsf_temp[lsf_temp >= 0])
-    
-    # Ensure we return the correct number of LSFs
-    lsf = lsf_temp[:p]
-    
-    return lsf
+class Residual_block2D(nn.Module):
+    def __init__(self, nb_filts, first=False):
+        super().__init__()
+        self.first = first
 
-# Example usage
-a = [1.0000, -1.6660, 0.9526, -0.2544, -0.7324, 1.3015, -0.6141, -0.2870, 0.6757, -0.5656, 0.2803, 0.0373, 0.0713, 0.0208, -0.2092, 0.0253, -0.0807, -0.0200, 0.2397, -0.1288, 0.0230]
-lsf = poly2lsf(a)
-print("Line spectral frequencies:", lsf)
+        if not self.first:
+            self.bn1 = nn.BatchNorm2d(num_features=nb_filts[0])
 
-# 오디오 파일 읽기
-x, Fs = librosa.load("real_temp/wav/LJ001-0001_16k.wav", sr=None)
+        self.lrelu = nn.LeakyReLU(negative_slope=0.3)
 
-# 프레임 크기 및 시작 지점 설정
-frame_size = 320
-bp = 22000
-M = 20
+        self.conv1 = nn.Conv2d(
+            in_channels=nb_filts[0],
+            out_channels=nb_filts[1],
+            kernel_size=3,
+            padding=1,
+            stride=1,
+        )
 
-# 특정 구간 추출
-segment = x[bp:bp + frame_size]
+        self.bn2 = nn.BatchNorm2d(num_features=nb_filts[1])
+        self.conv2 = nn.Conv2d(
+            in_channels=nb_filts[1],
+            out_channels=nb_filts[1],
+            padding=1,
+            kernel_size=3,
+            stride=1,
+        )
 
-# segment의 시간 축 생성
-time = np.arange(len(segment)) / Fs
+        if nb_filts[0] != nb_filts[1]:
+            self.downsample = True
+            self.conv_downsample = nn.Conv2d(
+                in_channels=nb_filts[0],
+                out_channels=nb_filts[1],
+                padding=0,
+                kernel_size=1,
+                stride=1,
+            )
+        else:
+            self.downsample = False
 
-# segment 플롯
-plt.figure(figsize=(14, 5))
-plt.plot(time, segment)
-plt.xlabel('Time (seconds)')
-plt.ylabel('Amplitude')
-plt.title('Waveform Segment of LJ001-0001_16k.wav')
-plt.grid()
+        #self.mp = nn.MaxPool2d(kernel_size=2, stride=2)  # 주석 처리
 
-# 플롯을 PNG 파일로 저장
-plt.savefig("segment_waveform.png")
-plt.close()
+    def forward(self, x):
+        identity = x
+        if not self.first:
+            out = self.bn1(x)
+            out = self.lrelu(out)
+        else:
+            out = x
 
-# LPC 계수 계산
-a = librosa.lpc(segment, order=M)
+        out = self.conv1(x)
+        out = self.bn2(out)
+        out = self.lrelu(out)
+        out = self.conv2(out)
 
-print("LPC coefficients:", a)
+        if self.downsample:
+            identity = self.conv_downsample(identity)
+
+        out += identity
+        #out = self.mp(out)  # 주석 처리
+        return out
+
+class SpecRNet(nn.Module):
+    def __init__(self, d_args, **kwargs):
+        super().__init__()
+
+        self.device = kwargs.get("device", "cuda")
+
+        self.first_bn = nn.BatchNorm2d(num_features=1)
+        self.selu = nn.SELU(inplace=True)
+        self.block0 = nn.Sequential(
+            Residual_block2D(nb_filts=[1, 16], first=True)
+        )
+        self.block2 = nn.Sequential(Residual_block2D(nb_filts=[16, 32]))
+        self.block4 = nn.Sequential(Residual_block2D(nb_filts=[32, 64]))
+        self.avgpool = nn.AdaptiveAvgPool2d(1)
+
+        self.fc_attention0 = self._make_attention_fc(
+            in_features=16, l_out_features=16
+        )
+        self.fc_attention2 = self._make_attention_fc(
+            in_features=32, l_out_features=32
+        )
+        self.fc_attention4 = self._make_attention_fc(
+            in_features=64, l_out_features=64
+        )
+
+        self.bn_before_gru = nn.BatchNorm2d(num_features=64)
+        self.gru = nn.GRU(
+            input_size=64,
+            hidden_size=d_args["gru_node"],
+            num_layers=d_args["nb_gru_layer"],
+            batch_first=True,
+            bidirectional=True,
+        )
+
+        self.fc1_gru = nn.Linear(
+            in_features=d_args["gru_node"] * 2, out_features=d_args["nb_fc_node"] * 2
+        )
+
+        self.fc2_gru = nn.Linear(
+            in_features=d_args["nb_fc_node"] * 2,
+            out_features=d_args["nb_classes"],
+            bias=True,
+        )
+
+        self.sig = nn.Sigmoid()
+
+    def forward(self, x):
+        print("Input shape:", x.shape)
+        x = self.first_bn(x)
+        x = self.selu(x)
+
+        x0 = self.block0(x)
+        print("Shape after block0:", x0.shape)
+        y0 = self.avgpool(x0).view(x0.size(0), -1)
+        print("Shape after avgpool (block0) and view:", y0.shape)
+        y0 = self.fc_attention0(y0)
+        y0 = self.sig(y0).view(y0.size(0), y0.size(1), 1, 1)
+        x = x0 * y0 + y0
+
+        #print("Shape before maxpool (block0):", x.shape)
+        #x = nn.MaxPool2d((2, 2))(x)  # 주석 처리
+        #print("Shape after maxpool (block0):", x.shape)
+
+        x2 = self.block2(x)
+        print("Shape after block2:", x2.shape)
+        y2 = self.avgpool(x2).view(x2.size(0), -1)
+        print("Shape after avgpool (block2) and view:", y2.shape)
+        y2 = self.fc_attention2(y2)
+        y2 = self.sig(y2).view(y2.size(0), y2.size(1), 1, 1)
+        x = x2 * y2 + y2
+
+        #print("Shape before maxpool (block2):", x.shape)
+        #if x.size(2) > 1 and x.size(3) > 1:
+        #    x = nn.MaxPool2d((2, 2))(x)  # 주석 처리
+        #print("Shape after maxpool (block2):", x.shape)
+
+        x4 = self.block4(x)
+        print("Shape after block4:", x4.shape)
+        y4 = self.avgpool(x4).view(x4.size(0), -1)
+        print("Shape after avgpool (block4) and view:", y4.shape)
+        y4 = self.fc_attention4(y4)
+        y4 = self.sig(y4).view(y4.size(0), y4.size(1), 1, 1)
+        x = x4 * y4 + y4
+
+        #print("Shape before maxpool (block4):", x.shape)
+        #if x.size(2) > 1 and x.size(3) > 1:
+        #    x = nn.MaxPool2d((2, 2))(x)  # 주석 처리
+        #print("Shape after maxpool (block4):", x.shape)
+
+        x = self.bn_before_gru(x)
+        x = self.selu(x)
+        x = x.squeeze(-2)  # (batch_size, 64, height, width)
+        print("Shape after squeeze:", x.shape)
+        x = x.flatten(start_dim=2)  # (batch_size, 64, height * width)
+        print("Shape after flatten:", x.shape)
+        x = x.permute(0, 2, 1)  # (batch_size, height * width, 64)
+        print("Shape after permute:", x.shape)
+        self.gru.flatten_parameters()
+        x, _ = self.gru(x)
+        print("Shape after GRU:", x.shape)
+        x = x[:, -1, :]
+        print("Shape after selecting last GRU output:", x.shape)
+        x = self.fc1_gru(x)
+        print("Shape after fc1_gru:", x.shape)
+        x = self.fc2_gru(x)
+        print("Shape after fc2_gru:", x.shape)
+
+        return x
+
+    def _make_attention_fc(self, in_features, l_out_features):
+        l_fc = []
+        l_fc.append(nn.Linear(in_features=in_features, out_features=l_out_features))
+        return nn.Sequential(*l_fc)
+
+# 모델 초기화
+d_args = {
+    "gru_node": 128,
+    "nb_gru_layer": 2,
+    "nb_fc_node": 64,
+    "nb_classes": 1
+}
+model = SpecRNet(d_args)
+
+# 예시 데이터 생성 (batch_size=32, 채널=1, 높이=12, 너비=972)
+example_data = torch.randn(4, 1, 4, 100)
+
+# 모델에 예시 데이터 입력 및 출력 확인
+output = model(example_data)
+print("Model output:", output)

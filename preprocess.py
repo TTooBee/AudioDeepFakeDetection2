@@ -65,9 +65,13 @@ def poly2lsf(a):
     if a[0] != 1.0:
         a = a / a[0]
     
-    # Check if the roots are within the unit circle
-    if np.max(np.abs(np.roots(a))) >= 1.0:
-        raise ValueError("Polynomial must have all roots inside the unit circle.")
+    # Check if the roots are within the unit circle and adjust if necessary
+    roots = np.roots(a)
+    for i, r in enumerate(roots):
+        if np.abs(r) >= 1.0:
+            roots[i] = 1.0 / np.conj(r)
+            print(f"Warning: Root {r} is outside the unit circle. Adjusting it.")
+    a = np.poly(roots).real
     
     # Form the sum and difference filters
     p = len(a) - 1  # The leading one in the polynomial is not used
@@ -169,6 +173,42 @@ def load_features(base_folder, original_feature_dim, selected_indices):
         all_features.append(selected_evs)
 
     return np.array(all_features)
+
+
+
+def load_and_pad_matrix_lsf(feature_path, target_length=324, feature_dim=40):
+    matrix = np.genfromtxt(feature_path, delimiter=',')
+    if matrix.shape[1] > target_length:
+        matrix = matrix[:, :target_length]
+    elif matrix.shape[1] < target_length:
+        padding = np.zeros((feature_dim, target_length - matrix.shape[1]))
+        matrix = np.hstack((matrix, padding))
+    
+    return matrix
+
+def load_lsf(base_folder, original_feature_dim, selected_indices):
+    all_features = []
+    feature_folder = os.path.join(base_folder, f'features_lsf_ol{original_feature_dim}')
+
+    files = [f for f in os.listdir(feature_folder) if f.endswith('.csv')]
+    
+    for file_name in tqdm(files, desc="Processing files", unit="file"):
+        feature_path = os.path.join(feature_folder, file_name)
+        try:
+            matrix = load_and_pad_matrix_lsf(feature_path, feature_dim=original_feature_dim)
+        except Exception as e:
+            print(f"DEBUG: Failed to load file {feature_path}: {e}")
+            continue
+        
+        delta = compute_delta(matrix)
+        delta_delta = compute_delta(delta)
+        combined = np.concatenate((matrix, delta, delta_delta), axis=1)
+
+        selected_lsf = combined[selected_indices, :]
+        all_features.append(selected_lsf)
+
+    return np.array(all_features)
+
 
 def extract_mfcc(base_folder, original_feature_dim, selected_indices, sample_rate=16000, n_fft=320, hop_length=160, win_length=320):
     all_features = []

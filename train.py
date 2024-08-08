@@ -65,7 +65,7 @@ def save_training_plot(train_losses, val_losses, train_accuracies, val_accuracie
     plt.plot(val_f1s, label='Validation F1')
     plt.plot(val_aucs, label='Validation AUC')
     plt.xlabel('Epochs')
-    plt.ylabel='Score'
+    plt.ylabel('Score')
     plt.title('F1 and AUC')
     plt.legend()
 
@@ -91,7 +91,7 @@ def train_and_validate(model, device, train_loader, val_loader, optimizer, crite
     if not save_path:
         save_path = os.path.join(result_folder, 'model_weights.pt')
 
-    early_stopping_patience = 10  # 조기 종료를 위한 patience
+    early_stopping_patience = 100  # 조기 종료를 위한 patience
     no_improvement_count = 0  # 개선되지 않은 epoch 수
 
     for epoch in range(epochs):
@@ -229,10 +229,9 @@ def main(args):
     elif args.model == 'specrnet':
         from SpecRNet import SpecRNet
         model_args = {
-            "filts": [[1, 16], [16, 32], [32, 64]], 
-            "gru_node": 1024,
-            "nb_gru_layer": 1,
-            "nb_fc_node": 512,
+            "gru_node": 256,
+            "nb_gru_layer": 8,
+            "nb_fc_node": 64,
             "nb_classes": 1
         }
         model = SpecRNet(model_args).to(device)

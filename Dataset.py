@@ -3,7 +3,7 @@ from torch.utils.data import Dataset
 import numpy as np
 import os
 
-from preprocess import load_features, extract_mfcc, extract_lsf, parse_feature_indices
+from preprocess import load_features, extract_mfcc, extract_lsf, parse_feature_indices, load_and_pad_matrix_lsf, load_lsf
 
 class AudioFeaturesDataset(Dataset):
     def __init__(self, base_folder_real, base_folder_fake, original_feature_dim, selected_feature_dim, model_type, train=True, test_split=0.2, mfcc_indices_str='all', evs_indices_str='none', lsp_indices_str='none', lsf_indices_str='none'):
@@ -11,14 +11,12 @@ class AudioFeaturesDataset(Dataset):
         n_mels = 50
         mfcc_indices = parse_feature_indices(mfcc_indices_str, n_mels)  # 고정된 50 필터뱅크
         evs_indices = parse_feature_indices(evs_indices_str, original_feature_dim)
-        # lsp_indices = parse_feature_indices(lsp_indices_str, original_feature_dim)
         lsf_indices = parse_feature_indices(lsf_indices_str, original_feature_dim)
 
         # Define file names for saving/loading all features
         save_dir = os.path.join('features_and_labels', f'lj_hifi_{original_feature_dim}')
         os.makedirs(save_dir, exist_ok=True)
         all_features_evs_file = os.path.join(save_dir, 'features_labels_evs.pt')
-        # all_features_lsp_file = os.path.join(save_dir, 'features_labels_lsp.pt')
         all_features_lsf_file = os.path.join(save_dir, 'features_labels_lsf.pt')
 
         # Check if the complete features files exist
@@ -71,12 +69,20 @@ class AudioFeaturesDataset(Dataset):
             features_fake_mfcc = extract_mfcc(base_folder_fake, n_mels, list(range(n_mels)))
             features_real_evs = load_features(base_folder_real, original_feature_dim, list(range(original_feature_dim)))
             features_fake_evs = load_features(base_folder_fake, original_feature_dim, list(range(original_feature_dim)))
-            features_real_lsf = extract_lsf(base_folder_real, original_feature_dim, list(range(original_feature_dim)))
-            features_fake_lsf = extract_lsf(base_folder_fake, original_feature_dim, list(range(original_feature_dim)))
+            
+            # base_folder 내에 매트랩으로 뽑은 lsf가 있다면 그것을 사용하고, 아니라면 직접 추출
+            folder_real = os.path.join(base_folder_real, f'features_lsf_ol{original_feature_dim}')
+            folder_fake = os.path.join(base_folder_fake, f'features_lsf_ol{original_feature_dim}')
+            if os.path.isdir(folder_real) and os.path.isdir(folder_fake) and os.listdir(folder_real) and os.listdir(folder_fake):
+                features_real_lsf = load_lsf(base_folder_real, original_feature_dim, list(range(original_feature_dim)))
+                features_fake_lsf = load_lsf(base_folder_fake, original_feature_dim, list(range(original_feature_dim)))
+            else:
+                features_real_lsf = extract_lsf(base_folder_real, original_feature_dim, list(range(original_feature_dim)))
+                features_fake_lsf = extract_lsf(base_folder_fake, original_feature_dim, list(range(original_feature_dim)))
+            
 
             # Save features
             # torch.save({'real': features_real_evs, 'fake': features_fake_evs}, all_features_evs_file)
-            # torch.save({'real': features_real_lsp, 'fake': features_fake_lsp}, all_features_lsp_file)
             # torch.save({'real': features_real_lsf, 'fake': features_fake_lsf}, all_features_lsf_file)
 
             # Apply selected indices

@@ -11,7 +11,7 @@ class SimpleLSTM(nn.Module):
         time_dim: int,
         mid_dim: int,
         out_dim: int,
-        dropout_prob: float = 0.5,  # Dropout 확률 추가
+        # dropout_prob: float = 0.5,  # Dropout 확률 추가
         **kwargs,
     ):
         super(SimpleLSTM, self).__init__()
@@ -19,14 +19,14 @@ class SimpleLSTM(nn.Module):
         self.lstm = nn.LSTM(
             input_size=feat_dim,
             hidden_size=mid_dim,
-            num_layers=2,
+            num_layers=30,
             bidirectional=True,
             batch_first=True,
-            dropout=dropout_prob,
+            # dropout=dropout_prob,
         )
         self.conv = nn.Conv1d(in_channels=mid_dim * 2, out_channels=10, kernel_size=1)
         self.fc = nn.Linear(in_features=time_dim * 10, out_features=out_dim)
-        self.dropout = nn.Dropout(dropout_prob)  # Dropout 레이어 추가
+        # self.dropout = nn.Dropout(dropout_prob)  # Dropout 레이어 추가
 
     def forward(self, x: torch.Tensor):
         """
@@ -45,7 +45,7 @@ class SimpleLSTM(nn.Module):
 
         feat = self.conv(feat)  # (B, C, T)
         feat = F.relu(feat)  # (B, C, T)
-        feat = self.dropout(feat)  # Dropout 적용
+        # feat = self.dropout(feat)  # Dropout 적용
         feat = feat.reshape(B, -1)  # (B, C*T)
         out = self.fc(feat)  # (B, out_dim)
 
