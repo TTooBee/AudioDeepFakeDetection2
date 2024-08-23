@@ -91,7 +91,7 @@ def train_and_validate(model, device, train_loader, val_loader, optimizer, crite
     if not save_path:
         save_path = os.path.join(result_folder, 'model_weights.pt')
 
-    early_stopping_patience = 100  # 조기 종료를 위한 patience
+    early_stopping_patience = 70  # 조기 종료를 위한 patience
     no_improvement_count = 0  # 개선되지 않은 epoch 수
 
     for epoch in range(epochs):
@@ -193,9 +193,10 @@ def main(args):
     mfcc_indices = parse_feature_indices(args.mfcc_feature_idx, args.feature_dim)
     evs_indices = parse_feature_indices(args.evs_feature_idx, args.feature_dim)
     lsf_indices = parse_feature_indices(args.lsf_feature_idx, args.feature_dim)
+    lpc_indices = parse_feature_indices(args.lpc_feature_idx, args.feature_dim)
     # lsp_indices = parse_feature_indices(args.lsp_feature_idx, args.feature_dim)
 
-    total_feature_dim = len(mfcc_indices) + len(evs_indices) + len(lsf_indices)# + len(lsp_indices)
+    total_feature_dim = len(mfcc_indices) + len(evs_indices) + len(lsf_indices) + len(lpc_indices)
 
     if args.model == 'cnn' and total_feature_dim < 8:
         raise ValueError("For CNN model, total_feature_dim must be at least 8. Please adjust your feature indices.")
@@ -208,7 +209,7 @@ def main(args):
         mfcc_indices_str=args.mfcc_feature_idx, 
         evs_indices_str=args.evs_feature_idx,
         lsf_indices_str=args.lsf_feature_idx,
-        # lsp_indices_str=args.lsp_feature_idx
+        lpc_indices_str=args.lpc_feature_idx
     )
     
     train_size = int(0.6 * len(dataset))
@@ -229,9 +230,9 @@ def main(args):
     elif args.model == 'specrnet':
         from SpecRNet import SpecRNet
         model_args = {
-            "gru_node": 256,
+            "gru_node": 64,
             "nb_gru_layer": 8,
-            "nb_fc_node": 64,
+            "nb_fc_node": 16,
             "nb_classes": 1
         }
         model = SpecRNet(model_args).to(device)
@@ -256,6 +257,6 @@ if __name__ == '__main__':
     parser.add_argument('--mfcc_feature_idx', type=str, default='all', help='Indices of mfcc features to use, space-separated or "all".')
     parser.add_argument('--evs_feature_idx', type=str, default='none', help='Indices of evs features to use, space-separated or "none".')
     parser.add_argument('--lsf_feature_idx', type=str, default='none', help='Indices of lsf features to use, space-separated or "none".')
-    # parser.add_argument('--lsp_feature_idx', type=str, default='none', help='Indices of lsp features to use, space-separated or "none".')
+    parser.add_argument('--lpc_feature_idx', type=str, default='none', help='Indices of lpc features to use, space-separated or "none".')
     args = parser.parse_args()
     main(args)

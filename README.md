@@ -40,6 +40,10 @@ python train.py --feature_dim 12 --real LJSpeech-1.1/wavs --fake generated_audio
 
 
 # 진행상황 및 주의사항(수시로 업데이트됨)
+- (2024/08/23) real_low, fake_low에 LJSpeech, generated audios 에서 앞의 1495개만 저장해두었음
+    - lpc를 사용하는 데에 있어서 몇몇 lpc들이 오류가 생겨서 5개의 음원은 생략하였음
+- lpc 사용 가능
+    - lpc 계수 자체도 사용 가능하고, lpc를 통해 얻은 켑스트럼도 사용할 수 있다
 - (2024/08/09) specrnet 사용 가능(단, 모델 사이즈가 커서 cuda out of memory 날 수도 있음)
 - 매트랩에서 12차, 16차 lsf 추출 완료
     - 매트랩에서 미리 뽑아둔 lsf 사용할 수 있도록 Dataset.py 수정해였음

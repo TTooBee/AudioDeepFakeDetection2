@@ -109,6 +109,7 @@ def poly2lsf(a):
 def extract_lpc_lsf(waveform, sample_rate, feature_dim, n_fft=100, hop_length=160, win_length=320):
     num_frames = 1 + int((waveform.size(1) - win_length) / hop_length)
     lsf_features = np.zeros((num_frames, feature_dim))
+    lpc_features = np.zeros((num_frames, feature_dim))
     # lsp_features = np.zeros((num_frames, feature_dim))
 
     for i in range(num_frames):
@@ -122,12 +123,13 @@ def extract_lpc_lsf(waveform, sample_rate, feature_dim, n_fft=100, hop_length=16
         lpc_coeffs = librosa.lpc(frame, order=feature_dim) # lpc 구하기
         # lsf = lpc_to_lsf(lpc_coeffs)
         lsf = poly2lsf(lpc_coeffs) # lpc -> lsf
-        # lsf_features[i, :] = lsf[:feature_dim]
+        lsf_features[i, :] = lsf[:feature_dim]
+        lpc_features[i, :] = lpc_coeffs[1:feature_dim+1]
         
         # For LSP, compute the roots and take their angle
         # lsp_features[i, :] = np.angle(np.roots(lpc_coeffs)[-feature_dim:])
     
-    return lsf_features.T # , lsp_features.T
+    return lsf_features.T, lpc_features.T
 
 def standardize(features):
     mean = np.mean(features, axis=1, keepdims=True)
@@ -183,7 +185,13 @@ def load_and_pad_matrix_lsf(feature_path, target_length=324, feature_dim=40):
     elif matrix.shape[1] < target_length:
         padding = np.zeros((feature_dim, target_length - matrix.shape[1]))
         matrix = np.hstack((matrix, padding))
-    
+
+    if matrix.shape[0] > feature_dim:
+        matrix = matrix[matrix.shape[0]-feature_dim:feature_dim+1, :]
+    elif matrix.shape[0] < feature_dim:
+        padding = np.zeros((feature_dim - matrix.shape[0], target_length))
+        matrix = np.vstack((matrix, padding))
+            
     return matrix
 
 def load_lsf(base_folder, original_feature_dim, selected_indices):
@@ -208,6 +216,31 @@ def load_lsf(base_folder, original_feature_dim, selected_indices):
         all_features.append(selected_lsf)
 
     return np.array(all_features)
+
+def load_lpc(base_folder, original_feature_dim, selected_indices):
+    all_features = []
+    feature_folder = os.path.join(base_folder, f'features_lpc_cep_ol{original_feature_dim}')
+
+    files = [f for f in os.listdir(feature_folder) if f.endswith('.csv')]
+    
+    for file_name in tqdm(files, desc="Processing files", unit="file"):
+        feature_path = os.path.join(feature_folder, file_name)
+        try:
+            matrix = load_and_pad_matrix_lsf(feature_path, feature_dim=original_feature_dim)
+        except Exception as e:
+            print(f"DEBUG: Failed to load file {feature_path}: {e}")
+            continue
+        
+        delta = compute_delta(matrix)
+        delta_delta = compute_delta(delta)
+        combined = np.concatenate((matrix, delta, delta_delta), axis=1)
+
+        selected_lpc = combined[selected_indices, :]
+        all_features.append(selected_lpc)
+
+    return np.array(all_features)
+
+
 
 
 def extract_mfcc(base_folder, original_feature_dim, selected_indices, sample_rate=16000, n_fft=320, hop_length=160, win_length=320):
@@ -260,13 +293,13 @@ def extract_mfcc(base_folder, original_feature_dim, selected_indices, sample_rat
         all_features.append(selected_mfcc)
     return np.array(all_features)
 
-def extract_lsf(base_folder, original_feature_dim, lsf_indices, sample_rate=16000, n_fft=100, hop_length=160, win_length=320):
+def extract_lsf(base_folder, original_feature_dim, lsf_indices, lpc_indices, sample_rate=16000, n_fft=100, hop_length=160, win_length=320):
     all_features_lsf = []
-    # all_features_lsp = []
+    all_features_lpc = []
     wav_folder = os.path.join(base_folder, 'wav')
     
     if not os.path.isdir(wav_folder):
-        return np.array(all_features_lsf) #, np.array(all_features_lsp)
+        return np.array(all_features_lsf), np.array(all_features_lpc)
 
     files = [f for f in os.listdir(wav_folder) if f.endswith(('.flac', '.wav'))]
     
@@ -277,7 +310,7 @@ def extract_lsf(base_folder, original_feature_dim, lsf_indices, sample_rate=1600
         if sr != sample_rate:
             waveform = torchaudio.transforms.Resample(orig_freq=sr, new_freq=sample_rate)(waveform)
         
-        lsf = extract_lpc_lsf(waveform, sample_rate, original_feature_dim, n_fft, hop_length, win_length)
+        lsf, lpc = extract_lpc_lsf(waveform, sample_rate, original_feature_dim, n_fft, hop_length, win_length)
 
         if lsf.shape[1] > 324:
             lsf = lsf[:, :324]
@@ -287,12 +320,28 @@ def extract_lsf(base_folder, original_feature_dim, lsf_indices, sample_rate=1600
             lsf = np.hstack((lsf, padding))
             # lsp = np.hstack((lsp, padding))
 
+        if lpc.shape[1] > 324:
+            lpc = lpc[:, :324]
+            # lsp = lsp[:, :324]
+        elif lpc.shape[1] < 324:
+            padding = np.zeros((original_feature_dim, 324 - lpc.shape[1]))
+            lpc = np.hstack((lpc, padding))
+            # lsp = np.hstack((lsp, padding))
+
         delta_lsf = compute_delta(lsf)
         delta_delta_lsf = compute_delta(delta_lsf)
         combined_lsf = np.concatenate((lsf, delta_lsf, delta_delta_lsf), axis=1)
         # combined_lsf = standardize(combined_lsf)  # 전체 행렬에 대해 정규화 진행
         selected_lsf = combined_lsf[lsf_indices, :]
 
+
+        delta_lpc = compute_delta(lpc)
+        delta_delta_lpc = compute_delta(delta_lpc)
+        combined_lpc = np.concatenate((lpc, delta_lpc, delta_delta_lpc), axis=1)
+        # combined_lpc = standardize(combined_lpc)  # 전체 행렬에 대해 정규화 진행
+        selected_lpc = combined_lpc[lpc_indices, :]
+        
+        
         # delta_lsp = compute_delta(lsp)
         # delta_delta_lsp = compute_delta(delta_lsp)
         # combined_lsp = np.concatenate((lsp, delta_lsp, delta_delta_lsp), axis=1)
@@ -300,9 +349,9 @@ def extract_lsf(base_folder, original_feature_dim, lsf_indices, sample_rate=1600
         # selected_lsp = combined_lsp[lsp_indices, :]
 
         all_features_lsf.append(selected_lsf)
-        # all_features_lsp.append(selected_lsp)
+        all_features_lpc.append(selected_lpc)
     
-    return np.array(all_features_lsf) # , np.array(all_features_lsp)
+    return np.array(all_features_lsf), np.array(all_features_lpc)
 
 def parse_feature_indices(index_str, max_dim):
     if index_str == 'all':
@@ -322,20 +371,20 @@ if __name__ == "__main__":
     parser.add_argument('--mfcc_feature_idx', type=str, default='all', help='Indices of mfcc features to use, space-separated or "all".')
     parser.add_argument('--evs_feature_idx', type=str, default='none', help='Indices of evs features to use, space-separated or "none".')
     parser.add_argument('--lsf_feature_idx', type=str, default='none', help='Indices of lsf features to use, space-separated or "none".')
-    parser.add_argument('--lsp_feature_idx', type=str, default='none', help='Indices of lsp features to use, space-separated or "none".')
+    parser.add_argument('--lpc_feature_idx', type=str, default='none', help='Indices of lpc features to use, space-separated or "none".')
     args = parser.parse_args()
 
     mfcc_indices = parse_feature_indices(args.mfcc_feature_idx, args.feature_dim)
     evs_indices = parse_feature_indices(args.evs_feature_idx, args.feature_dim)
     lsf_indices = parse_feature_indices(args.lsf_feature_idx, args.feature_dim)
-    lsp_indices = parse_feature_indices(args.lsp_feature_idx, args.feature_dim)
+    lpc_indices = parse_feature_indices(args.lpc_feature_idx, args.feature_dim)
 
     features_real_mfcc = extract_mfcc(args.real, args.feature_dim, mfcc_indices)
     features_fake_mfcc = extract_mfcc(args.fake, args.feature_dim, mfcc_indices)
     features_real_evs = load_features(args.real, args.feature_dim, evs_indices)
     features_fake_evs = load_features(args.fake, args.feature_dim, evs_indices)
-    features_real_lsf, features_real_lsp = extract_lsf(args.real, args.feature_dim, lsf_indices, lsp_indices)
-    features_fake_lsf, features_fake_lsp = extract_lsf(args.fake, args.feature_dim, lsf_indices, lsp_indices)
+    features_real_lsf, features_real_lpc = extract_lsf(args.real, args.feature_dim, lsf_indices, lpc_indices)
+    features_fake_lsf, features_fake_lpc = extract_lsf(args.fake, args.feature_dim, lsf_indices, lpc_indices)
 
     print(f"MFCC Real features shape: {features_real_mfcc.shape}")
     print(f"MFCC Fake features shape: {features_fake_mfcc.shape}")
@@ -343,73 +392,73 @@ if __name__ == "__main__":
     print(f"EVS Fake features shape: {features_fake_evs.shape}")
     print(f"LSF Real features shape: {features_real_lsf.shape}")
     print(f"LSF Fake features shape: {features_fake_lsf.shape}")
-    print(f"LSP Real features shape: {features_real_lsp.shape}")
-    print(f"LSP Fake features shape: {features_fake_lsp.shape}")
+    print(f"LSP Real features shape: {features_real_lpc.shape}")
+    print(f"LSP Fake features shape: {features_fake_lpc.shape}")
 
     # 임시로 LSF와 LSP를 보는 코드 추가
     # 가장 처음 처리하는 음원 하나에 대해 중간 프레임 하나에서 LPC, LSF, LSP를 추출하고 필터를 플로팅
 
-    first_real_wav_path = os.path.join(args.real, 'wav', os.listdir(os.path.join(args.real, 'wav'))[0])
-    waveform, sr = torchaudio.load(first_real_wav_path)
+    # first_real_wav_path = os.path.join(args.real, 'wav', os.listdir(os.path.join(args.real, 'wav'))[0])
+    # waveform, sr = torchaudio.load(first_real_wav_path)
     
-    if sr != 16000:
-        waveform = torchaudio.transforms.Resample(orig_freq=sr, new_freq=16000)(waveform)
+    # if sr != 16000:
+    #     waveform = torchaudio.transforms.Resample(orig_freq=sr, new_freq=16000)(waveform)
 
-    feature_dim = args.feature_dim  # LPC 차수를 인자로 받아 설정
-    frame_start = 21000
-    frame_end = frame_start + 400
-    frame = waveform[0, frame_start:frame_end].numpy()
+    # feature_dim = args.feature_dim  # LPC 차수를 인자로 받아 설정
+    # frame_start = 21000
+    # frame_end = frame_start + 400
+    # frame = waveform[0, frame_start:frame_end].numpy()
 
-    # librosa를 사용하여 LPC 계수를 계산
-    lpc_coeffs = librosa.lpc(frame, order=feature_dim)
+    # # librosa를 사용하여 LPC 계수를 계산
+    # lpc_coeffs = librosa.lpc(frame, order=feature_dim)
 
-    print(f"LPC Coefficients (order {feature_dim}): {lpc_coeffs}")
+    # print(f"LPC Coefficients (order {feature_dim}): {lpc_coeffs}")
 
-    # Formant Filter와 LSP Plot
-    w, h = np.linspace(0, np.pi, 512), np.abs(1 / np.polyval(lpc_coeffs, np.exp(1j * np.linspace(0, np.pi, 512))))
-    lsp = np.angle(np.roots(lpc_coeffs)[-feature_dim:])
-    lsp_freqs = np.sort(lsp * (16000 / (2 * np.pi)))  # 주파수로 변환
+    # # Formant Filter와 LSP Plot
+    # w, h = np.linspace(0, np.pi, 512), np.abs(1 / np.polyval(lpc_coeffs, np.exp(1j * np.linspace(0, np.pi, 512))))
+    # lsp = np.angle(np.roots(lpc_coeffs)[-feature_dim:])
+    # lsp_freqs = np.sort(lsp * (16000 / (2 * np.pi)))  # 주파수로 변환
 
-    # LSP 크기 출력
-    print(f"LSP shape: {lsp_freqs.shape}")
+    # # LSP 크기 출력
+    # print(f"LSP shape: {lsp_freqs.shape}")
 
-    plt.figure()
-    plt.plot(w / np.pi * 8000, 20 * np.log10(h / np.max(h)), label='Formant Filter')
-    for freq in lsp_freqs:
-        plt.axvline(x=freq, color='r', linestyle='--', label='LSP' if freq == lsp_freqs[0] else "")
-    plt.title('Formant Filter and LSP')
-    plt.xlabel('Frequency (Hz)')
-    plt.ylabel('Gain (dB)')
-    plt.grid()
-    plt.legend()
+    # plt.figure()
+    # plt.plot(w / np.pi * 8000, 20 * np.log10(h / np.max(h)), label='Formant Filter')
+    # for freq in lsp_freqs:
+    #     plt.axvline(x=freq, color='r', linestyle='--', label='LSP' if freq == lsp_freqs[0] else "")
+    # plt.title('Formant Filter and LSP')
+    # plt.xlabel('Frequency (Hz)')
+    # plt.ylabel('Gain (dB)')
+    # plt.grid()
+    # plt.legend()
 
-    # 이미지 파일로 저장
-    output_image_path = os.path.join(os.getcwd(), 'formant_lsp_filter.png')
-    plt.savefig(output_image_path)
-    plt.close()
+    # # 이미지 파일로 저장
+    # output_image_path = os.path.join(os.getcwd(), 'formant_lsp_filter.png')
+    # plt.savefig(output_image_path)
+    # plt.close()
 
-    print(f"Formant and LSP filter plot saved to {output_image_path}")
+    # print(f"Formant and LSP filter plot saved to {output_image_path}")
 
-    # Formant Filter와 LSF Plot
-    lsf = lpc_to_lsf(lpc_coeffs)
-    lsf_freqs = np.sort(lsf * (16000 / (2 * np.pi)))  # 주파수로 변환
+    # # Formant Filter와 LSF Plot
+    # lsf = lpc_to_lsf(lpc_coeffs)
+    # lsf_freqs = np.sort(lsf * (16000 / (2 * np.pi)))  # 주파수로 변환
 
-    # LSF 크기 출력
-    print(f"LSF shape: {lsf_freqs.shape}")
+    # # LSF 크기 출력
+    # print(f"LSF shape: {lsf_freqs.shape}")
 
-    plt.figure()
-    plt.plot(w / np.pi * 8000, 20 * np.log10(h / np.max(h)), label='Formant Filter')
-    for freq in lsf_freqs:
-        plt.axvline(x=freq, color='g', linestyle='--', label='LSF' if freq == lsf_freqs[0] else "")
-    plt.title('Formant Filter and LSF')
-    plt.xlabel('Frequency (Hz)')
-    plt.ylabel('Gain (dB)')
-    plt.grid()
-    plt.legend()
+    # plt.figure()
+    # plt.plot(w / np.pi * 8000, 20 * np.log10(h / np.max(h)), label='Formant Filter')
+    # for freq in lsf_freqs:
+    #     plt.axvline(x=freq, color='g', linestyle='--', label='LSF' if freq == lsf_freqs[0] else "")
+    # plt.title('Formant Filter and LSF')
+    # plt.xlabel('Frequency (Hz)')
+    # plt.ylabel('Gain (dB)')
+    # plt.grid()
+    # plt.legend()
 
-    # 이미지 파일로 저장
-    output_image_path = os.path.join(os.getcwd(), 'formant_lsf_filter.png')
-    plt.savefig(output_image_path)
-    plt.close()
+    # # 이미지 파일로 저장
+    # output_image_path = os.path.join(os.getcwd(), 'formant_lsf_filter.png')
+    # plt.savefig(output_image_path)
+    # plt.close()
 
-    print(f"Formant and LSF filter plot saved to {output_image_path}")
+    # print(f"Formant and LSF filter plot saved to {output_image_path}")
